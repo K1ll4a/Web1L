@@ -25,8 +25,6 @@ The UI posts `(x, y, r)` via **AJAX** to `/api/check`; the Java app validates, c
 * [Client Validation](#-client-validation)
 * [How it Flows](#-how-it-flows)
 * [Troubleshooting](#-troubleshooting)
-* [Development Notes](#-development-notes)
-* [License](#-license)
 
 ---
 
