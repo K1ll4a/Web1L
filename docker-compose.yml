@@ -1,0 +1,17 @@
+services:
+  fastcgi_java:
+    build:
+      context: .                      # корень проекта (чтобы был виден /lib)
+      dockerfile: server-java/Dockerfile
+    container_name: fastcgi-java
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: web-static
+    ports:
+      - "8088:80"
+    depends_on:
+      - fastcgi_java
