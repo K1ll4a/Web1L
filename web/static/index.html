@@ -31,24 +31,25 @@
                     <div>Введите X:</div>
                     <input name="x-value" id="x-input" type="text" placeholder="значение от -3 до 3" maxlength="7">
                 </div>
-                <div class="row">
-                    <div>Выберете Y:</div>
-                    <div><input name="y-value" type="radio" value="-3">-3</div>
-                    <div><input name="y-value" type="radio" value="-2">-2</div>
-                    <div><input name="y-value" type="radio" value="-1">-1</div>
-                    <div><input name="y-value" type="radio" value="0">0</div>
-                    <div><input name="y-value" type="radio" value="1">1</div>
-                    <div><input name="y-value" type="radio" value="2">2</div>
-                    <div><input name="y-value" type="radio" value="3">3</div>
-                    <div><input name="y-value" type="radio" value="4">4</div>
-                    <div><input name="y-value" type="radio" value="5">5</div>
+                <div id="y-group">
+                    <span>Выберете Y:</span>
+                    <label><input type="radio" name="y" value="-3"> -3</label>
+                    <label><input type="radio" name="y" value="-2"> -2</label>
+                    <label><input type="radio" name="y" value="-1"> -1</label>
+                    <label><input type="radio" name="y" value="0"> 0</label>
+                    <label><input type="radio" name="y" value="1"> 1</label>
+                    <label><input type="radio" name="y" value="2"> 2</label>
+                    <label><input type="radio" name="y" value="3"> 3</label>
+                    <label><input type="radio" name="y" value="4"> 4</label>
+                    <label><input type="radio" name="y" value="5"> 5</label>
                 </div>
                 <div class="row">
                     <div>Введите R:</div>
                     <input name="r-value" id="r-input" type="text" placeholder="значение от 1 до 4" maxlength="7">
                 </div>
             </div>
-            <button class="main__block submit_button" style="margin-bottom: 15px;" id="submit">Проверить</button>
+            <button class="main__block submit_button" style="margin-bottom: 15px;" id="submit" >Проверить</button>
+            <button id="clear-btn" type="button">Очистить историю</button>
         </div>
         <div>
             <div class="result-title">Результат</div>
