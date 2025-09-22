@@ -2,10 +2,7 @@ package app;
 
 import com.fastcgi.FCGIInterface;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.*;
@@ -15,6 +12,7 @@ public class Server {
 
 
     private static final Deque<Map<String, Object>> HISTORY = new ArrayDeque<>();
+    private static final int MAX_HISTORY = 200;
 
 
     private static boolean inRect(double x, double y, double r) {
@@ -36,7 +34,6 @@ public class Server {
         return inRect(x, y, r) || inTriangle(x, y, r) || inCircle(x, y, r);
     }
 
-
     private static Map<String, Object> handle(double x, double y, double r) {
         long t0 = System.nanoTime();
         boolean rect = inRect(x, y, r);
@@ -46,7 +43,9 @@ public class Server {
         long durMs = Math.max(0, Math.round((System.nanoTime() - t0) / 1_000_000.0));
 
         Map<String, Object> item = new LinkedHashMap<>();
-        item.put("time", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()));
+        SimpleDateFormat fmt = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+        fmt.setTimeZone(TimeZone.getTimeZone("Europe/Moscow"));
+        item.put("time", fmt.format(new Date()));
         item.put("x", x);
         item.put("y", y);
         item.put("r", r);
@@ -58,7 +57,7 @@ public class Server {
 
         synchronized (HISTORY) {
             HISTORY.addFirst(item);
-            while (HISTORY.size() > 200) HISTORY.removeLast();
+            while (HISTORY.size() > MAX_HISTORY) HISTORY.removeLast();
         }
 
         Map<String, Object> resp = new LinkedHashMap<>();
@@ -74,22 +73,29 @@ public class Server {
         writeJson(sb, o);
         return sb.toString();
     }
+
     @SuppressWarnings("unchecked")
     private static void writeJson(StringBuilder sb, Object o) {
         if (o == null) { sb.append("null"); return; }
         if (o instanceof String) {
-            sb.append('"').append(((String) o).replace("\\", "\\\\").replace("\"", "\\\"")).append('"'); return;
+            sb.append('"')
+                    .append(((String) o).replace("\\", "\\\\").replace("\"", "\\\""))
+                    .append('"');
+            return;
         }
         if (o instanceof Number || o instanceof Boolean) { sb.append(o.toString()); return; }
         if (o instanceof Map) {
             sb.append('{'); boolean first = true;
             for (Map.Entry<String, Object> e : ((Map<String, Object>) o).entrySet()) {
                 if (!first) sb.append(',');
-                sb.append('"').append(e.getKey().replace("\\", "\\\\").replace("\"", "\\\"")).append('"').append(':');
+                sb.append('"')
+                        .append(e.getKey().replace("\\", "\\\\").replace("\"", "\\\""))
+                        .append('"').append(':');
                 writeJson(sb, e.getValue());
                 first = false;
             }
-            sb.append('}'); return;
+            sb.append('}');
+            return;
         }
         if (o instanceof Iterable) {
             sb.append('['); boolean first = true;
@@ -98,15 +104,16 @@ public class Server {
                 writeJson(sb, v);
                 first = false;
             }
-            sb.append(']'); return;
+            sb.append(']');
+            return;
         }
         sb.append('"').append(o.toString()).append('"');
     }
 
     private static Map<String, String> parseJsonBody(String body) {
-
         Map<String, String> m = new HashMap<>();
-        String t = body == null ? "" : body.trim();
+        if (body == null) return m;
+        String t = body.trim();
         if (t.startsWith("{")) t = t.substring(1);
         if (t.endsWith("}")) t = t.substring(0, t.length() - 1);
         for (String p : t.split(",")) {
@@ -127,34 +134,52 @@ public class Server {
     }
 
     public static void main(String[] args) throws Exception {
-
         FCGIInterface fcgi = new FCGIInterface();
         final byte[] headers = ("Status: 200 OK\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n")
                 .getBytes(StandardCharsets.UTF_8);
 
         while (true) {
             int rc = fcgi.FCGIaccept();
-            if (rc < 0) { // ожидание следующего запроса
+            if (rc < 0) {
                 try { Thread.sleep(10); } catch (InterruptedException ignored) {}
                 continue;
             }
 
 
-            Properties p = System.getProperties();
-            String method      = Optional.ofNullable(p.getProperty("REQUEST_METHOD")).orElse("GET");
-            String contentType = Optional.ofNullable(p.getProperty("CONTENT_TYPE")).orElse("");
+            Properties props = System.getProperties();
+            String method      = Optional.ofNullable(props.getProperty("REQUEST_METHOD")).orElse("GET");
+            String contentType = Optional.ofNullable(props.getProperty("CONTENT_TYPE")).orElse("");
+            String scriptName  = Optional.ofNullable(props.getProperty("SCRIPT_NAME")).orElse("");
+            String pathInfo    = Optional.ofNullable(props.getProperty("PATH_INFO")).orElse("");
+            String requestUri  = Optional.ofNullable(props.getProperty("REQUEST_URI")).orElse("");
             int contentLen = 0;
             try {
-                String cl = p.getProperty("CONTENT_LENGTH");
+                String cl = props.getProperty("CONTENT_LENGTH");
                 if (cl != null) contentLen = Integer.parseInt(cl.trim());
             } catch (Exception ignored) {}
 
+            String route = !scriptName.isEmpty() ? scriptName
+                    : !pathInfo.isEmpty()   ? pathInfo
+                    : requestUri; // например: /api/clear?ts=...
+
             String outJson;
 
-            if (!"POST".equalsIgnoreCase(method)) {
-                outJson = error("Method Not Allowed (use POST)");
-            } else {
-                // читаем РОВНО CONTENT_LENGTH байт из stdin
+
+            if (route.startsWith("/api/clear")) {
+                if (!"POST".equalsIgnoreCase(method)) {
+                    outJson = error("Method Not Allowed (use POST)");
+                } else {
+                    synchronized (HISTORY) { HISTORY.clear(); }
+                    Map<String,Object> resp = new LinkedHashMap<>();
+                    resp.put("ok", true);
+                    resp.put("cleared", true);
+                    resp.put("history", List.of());
+                    outJson = json(resp);
+                }
+
+
+            } else if (route.startsWith("/api/check") || route.isEmpty())  {
+
                 byte[] buf = new byte[Math.max(0, contentLen)];
                 int read = 0;
                 while (read < buf.length) {
@@ -165,9 +190,12 @@ public class Server {
                 String body = new String(buf, 0, read, StandardCharsets.UTF_8);
 
 
-                System.err.printf("FCGI REQ: method=%s len=%d body=%s%n", method, contentLen, body);
+                System.err.printf("FCGI REQ: script=%s method=%s len=%d body=%s%n",
+                        scriptName, method, contentLen, body);
 
-                if (!contentType.toLowerCase().contains("application/json")) {
+                if (!"POST".equalsIgnoreCase(method)) {
+                    outJson = error("Method Not Allowed (use POST)");
+                } else if (!contentType.toLowerCase().contains("application/json")) {
                     outJson = error("Content-Type must be application/json");
                 } else {
                     try {
@@ -177,19 +205,27 @@ public class Server {
                         double r = Double.parseDouble(data.get("r"));
 
 
-                        if (x < -3 || x > 3)         outJson = error("X out of range [-3;3]");
-                        else if (y < -3 || y > 5)    outJson = error("Y out of range {-3..5}");
-                        else if (r < 1 || r > 4)     outJson = error("R out of range [1;4]");
-                        else                         outJson = json(handle(x, y, r));
+                        if (x < -3 || x > 3)        outJson = error("X out of range [-3;3]");
+                        else if (y < -3 || y > 5)   outJson = error("Y out of range {-3..5}");
+                        else if (r < 1 || r > 4)    outJson = error("R out of range [1;4]");
+                        else                        outJson = json(handle(x, y, r));
                     } catch (Exception e) {
                         outJson = error("Bad request: " + e.getMessage());
                     }
                 }
+
+
+            } else {
+                outJson = error("Unknown endpoint: " + route);
             }
+
 
             System.out.write(headers);
             System.out.write(outJson.getBytes(StandardCharsets.UTF_8));
             System.out.flush();
+            System.err.printf("FCGI REQ: route=%s method=%s len=%s%n",
+                    route, method, Optional.ofNullable(props.getProperty("CONTENT_LENGTH")).orElse("-"));
+
         }
     }
 }
