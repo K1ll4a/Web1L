@@ -1,112 +1,220 @@
 
-
-(function () {
-  const xInput = document.getElementById('x-input');
-  const rInput = document.getElementById('r-input');
-  const submitBtn = document.getElementById('submit');
-  const resultContainer = document.getElementById('result');
+'use strict';
 
 
-  function parseNumber(str) {
-    if (typeof str !== 'string') return NaN;
+const SEL = {
+  xInput:   '#x-input',
+  rInput:   '#r-input',
+  checkBtn: '#submit',
+  clearBtn: '#clear-btn',
+  yRadios:  'input[name="y"]',
+  yRadiosAlt: 'input[name="Y"]',
 
-    const s = str.replace(',', '.').trim();
-    if (s === '') return NaN;
-    return Number(s);
-  }
 
-  function getY() {
-    const radios = Array.from(document.querySelectorAll('input[name="y-value"]'));
-    const chosen = radios.find(r => r.checked);
-    return chosen ? Number(chosen.value) : null;
-  }
+  tableBodies: ['#result tbody', '#results tbody', '#result-body', '#results-body', 'table tbody'],
+  errorBox: '#errors'
+};
 
-  function invalid(msg) {
-    alert(msg);
-  }
 
-  function validate() {
-    const x = parseNumber(xInput.value);
-    const y = getY();
-    const r = parseNumber(rInput.value);
+const $  = (s) => document.querySelector(s);
+const $$ = (s) => Array.from(document.querySelectorAll(s));
 
-    if (!Number.isFinite(x)) { invalid('X должен быть числом.'); return null; }
-    if (x < -3 || x > 3) { invalid('X должен быть в диапазоне [-3; 3].'); return null; }
+function showError(msg) {
+  const box = $(SEL.errorBox);
+  if (box) { box.textContent = msg || ''; box.style.display = msg ? 'block' : 'none'; }
+  else if (msg) alert(msg);
+}
 
-    if (y === null || !Number.isFinite(y)) { invalid('Не выбран Y.'); return null; }
-    if (y < -3 || y > 5) { invalid('Y должен быть в диапазоне {-3..5}.'); return null; }
+function parseNumber(v) {
+  if (v === null || v === undefined) return NaN;
+  const s = String(v).trim().replace(',', '.');
+  return s === '' ? NaN : Number(s);
+}
 
-    if (!Number.isFinite(r)) { invalid('R должен быть числом.'); return null; }
-    if (r <= 0) { invalid('R должен быть положительным.'); return null; }
-    if (r < 1 || r > 4) { invalid('R должен быть в диапазоне [1; 4].'); return null; }
 
-    return { x, y, r };
-  }
+function readY() {
 
-  function renderRow(item) {
+  let r = $$(SEL.yRadios).find(el => el.checked);
 
-    const cells = [
-      item.time,
-      String(item.x),
-      String(item.y),
-      String(item.r),
-      item.hit ? 'ДА' : 'НЕТ',
-      item.durationMs + ' ms'
-    ];
-    cells.forEach(text => {
-      const div = document.createElement('div');
-      div.textContent = text;
-      resultContainer.appendChild(div);
+  if (!r) r = $$(SEL.yRadiosAlt).find(el => el.checked);
+
+  if (!r) r = $$( 'input[type="radio"]:checked' ).find(Boolean);
+  if (!r) return NaN;
+
+
+  let raw = (r.value && r.value !== 'on') ? r.value : (
+      (r.dataset && r.dataset.value) ||
+      (r.nextSibling && r.nextSibling.nodeType === 3 ? r.nextSibling.nodeValue : '')
+  );
+
+  return parseNumber(raw);
+}
+
+function readInputs() {
+  const x = parseNumber($(SEL.xInput)?.value);
+  const r = parseNumber($(SEL.rInput)?.value);
+  const y = readY();
+  return { x, y, r };
+}
+
+function validate({ x, y, r }) {
+  if (!Number.isFinite(x)) return 'X must be a number';
+  if (x < -3 || x > 3)      return 'X must be in [-3, 3]';
+
+  if (!Number.isFinite(y))  return 'Y must be a number';
+  if (!Number.isInteger(y)) return 'Y must be an integer';
+  if (y < -3 || y > 5)      return 'Y must be in {-3..5}';
+
+  if (!Number.isFinite(r))  return 'R must be a number';
+  if (r < 1 || r > 4)       return 'R must be in [1, 4]';
+
+  return null;
+}
+
+
+function attachNumericGuards() {
+  const allow = /[0-9\-\.\,]/;
+  [$(SEL.xInput), $(SEL.rInput)].forEach(inp => {
+    if (!inp) return;
+    inp.addEventListener('keypress', (e) => {
+      const k = e.key;
+      if (k.length === 1 && !allow.test(k)) e.preventDefault();
     });
-  }
-
-  function renderHistory(history) {
-    resultContainer.innerHTML = '';
-    history.forEach(renderRow);
-  }
-
-
-  const saved = localStorage.getItem('history');
-  if (saved) {
-    try { renderHistory(JSON.parse(saved)); } catch (_e) {}
-  }
-
-  async function send(data) {
-    const start = performance.now();
-    const res = await fetch('/api/check', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(data)
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error('Ошибка ответа FastCGI: ' + text);
-    }
-    const payload = await res.json();
-
-    const duration = Math.round(performance.now() - start);
-    const item = payload.item || {
-      time: new Date().toLocaleString(),
-      x: data.x, y: data.y, r: data.r,
-      hit: payload.hit === true,
-      durationMs: duration
-    };
-    const history = payload.history || [];
-
-    const clientHistory = history.length ? history : (JSON.parse(localStorage.getItem('history') || '[]'));
-    clientHistory.unshift(item);
-    localStorage.setItem('history', JSON.stringify(clientHistory.slice(0, 200)));
-    renderHistory(clientHistory);
-  }
-
-  submitBtn.addEventListener('click', async () => {
-    const data = validate();
-    if (!data) return;
-    try {
-      await send(data);
-    } catch (e) {
-      console.error(e);
-      alert(e.message);
-    }
   });
-})();
+}
+
+
+function fmtNum(v) {
+  if (v === null || v === undefined || Number.isNaN(Number(v))) return '';
+  const n = Number(v);
+  return Math.abs(n) >= 1e6 ? n.toExponential(2) : String(n);
+}
+
+
+function pickResultTarget() {
+  const grid = document.getElementById('result');
+  if (grid) return { type: 'grid', el: grid };
+
+
+  for (const s of SEL.tableBodies) {
+    const el = $(s);
+    if (el) return { type: 'table', el };
+  }
+  const t = document.querySelector('table');
+  if (t) {
+    let tb = t.tBodies[0];
+    if (!tb) tb = t.appendChild(document.createElement('tbody'));
+    return { type: 'table', el: tb };
+  }
+  return null;
+}
+
+function appendCellGrid(grid, text) {
+  const d = document.createElement('div');
+  d.textContent = text;
+  grid.appendChild(d);
+}
+
+function renderHistory(history) {
+  const target = pickResultTarget();
+  if (!target) return;
+
+  if (target.type === 'grid') {
+    const grid = target.el;
+    grid.innerHTML = '';
+    (history || []).forEach(row => {
+      appendCellGrid(grid, String(row.time || ''));
+      appendCellGrid(grid, fmtNum(row.x));
+      appendCellGrid(grid, fmtNum(row.y));
+      appendCellGrid(grid, fmtNum(row.r));
+      appendCellGrid(grid, row.hit ? 'ДА' : 'НЕТ');
+      appendCellGrid(grid, (row.durationMs ?? 0) + ' ms');
+    });
+  } else {
+    const tbody = target.el;
+    tbody.innerHTML = '';
+    (history || []).forEach(row => {
+      const tr = document.createElement('tr');
+
+      const tdTime = document.createElement('td'); tdTime.textContent = String(row.time || ''); tr.appendChild(tdTime);
+      const tdX = document.createElement('td'); tdX.textContent = fmtNum(row.x); tr.appendChild(tdX);
+      const tdY = document.createElement('td'); tdY.textContent = fmtNum(row.y); tr.appendChild(tdY);
+      const tdR = document.createElement('td'); tdR.textContent = fmtNum(row.r); tr.appendChild(tdR);
+      const tdHit = document.createElement('td'); tdHit.textContent = row.hit ? 'ДА' : 'НЕТ'; tr.appendChild(tdHit);
+      const tdDur = document.createElement('td'); tdDur.textContent = (row.durationMs ?? 0) + ' ms'; tr.appendChild(tdDur);
+
+      tbody.appendChild(tr);
+    });
+  }
+}
+
+
+async function postJson(url, payload) {
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: payload ? JSON.stringify(payload) : '{}'
+  });
+  if (!resp.ok) {
+    const txt = await resp.text().catch(() => '');
+    throw new Error(`HTTP ${resp.status} ${url}: ${txt || 'Server error'}`);
+  }
+  return resp.json();
+}
+
+
+async function onCheck() {
+  showError('');
+  try {
+    const data = readInputs();
+    const err = validate(data);
+    if (err) { showError(err); return; }
+
+    const res = await postJson('/api/check', data);
+    if (!res?.ok) throw new Error(res?.error || 'Unknown server error');
+
+    renderHistory(res.history || []);
+  } catch (e) {
+    showError(e.message || String(e));
+  }
+}
+
+async function onClear() {
+  showError('');
+  try {
+    const res = await postJson('/api/clear', {});
+    if (!res?.ok) throw new Error(res?.error || 'Unknown server error');
+    renderHistory([]);
+  } catch (e) {
+    showError(e.message || String(e));
+  }
+}
+
+
+function init() {
+  attachNumericGuards();
+
+  const check = $(SEL.checkBtn);
+  const clear = $(SEL.clearBtn);
+
+  if (check) {
+
+    check.addEventListener('click', (e) => { e.preventDefault(); onCheck(); });
+    if (check.form) {
+      check.form.addEventListener('submit', (e) => { e.preventDefault(); onCheck(); });
+    }
+  }
+  if (clear) {
+    clear.addEventListener('click', (e) => { e.preventDefault(); onClear(); });
+  }
+
+
+  [$(SEL.xInput), $(SEL.rInput)].forEach(inp => {
+    if (!inp) return;
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); onCheck(); }
+    });
+  });
+}
+
+document.addEventListener('DOMContentLoaded', init);
